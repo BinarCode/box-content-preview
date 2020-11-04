@@ -36,7 +36,6 @@ class AssetLoader {
             }
             return (
                 viewer.EXT.indexOf(extension) > -1
-                // file.representations.entries.some(entry => viewer.REP === entry.representation)
             );
         });
     }

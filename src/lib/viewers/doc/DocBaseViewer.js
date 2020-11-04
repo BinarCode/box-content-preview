@@ -945,7 +945,6 @@ class DocBaseViewer extends BaseViewer {
             // For other browsers, open and print in a new tab
         } else {
             if (!this.printURL) {
-                console.log('fileBlob', this.fileBlob);
                 this.printURL = URL.createObjectURL(this.fileBlob);
             }
 

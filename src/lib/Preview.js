@@ -993,7 +993,6 @@ class Preview extends EventEmitter {
 
             this.loadViewer();
         } catch (err) {
-            console.log(err);
             const error =
                 err instanceof PreviewError
                     ? err
@@ -1043,7 +1042,7 @@ class Preview extends EventEmitter {
         }
 
         // Determine the viewer to use
-        const viewer = loader.determineViewer('docx');
+        const viewer = loader.determineViewer('pdf');
 
         // Log the type of file
         this.logger.setType(viewer.NAME);

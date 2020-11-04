@@ -167,11 +167,6 @@ export function cacheFile(cache, file) {
         return;
     }
 
-    // Some viewers require the original file for preview, so this adds a faked 'ORIGINAL' representation
-    // if (file.representations) {
-    //     addOriginalRepresentation(file);
-    // }
-
     // Cache using file ID as a key
     cache.set(getFileCacheKey({ fileId: file.id }), file);
 
