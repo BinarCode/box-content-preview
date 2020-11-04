@@ -145,13 +145,6 @@
         "last 2 iOS versions",
         "IE 11"
     ],
-    "husky": {
-        "hooks": {
-            "pre-commit": "lint-staged",
-            "pre-push": "yarn lint",
-            "commit-msg": "commitlint -e"
-        }
-    },
     "resolutions": {
         "mojito-rb-gen/merge": "1.2.1"
     }

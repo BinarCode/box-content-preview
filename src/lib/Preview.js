@@ -1,9 +1,8 @@
-/* eslint-disable import/first */
+import axios from 'axios';
 import './polyfill';
 import EventEmitter from 'events';
 import cloneDeep from 'lodash/cloneDeep';
 import throttle from 'lodash/throttle';
-/* eslint-enable import/first */
 import Api from './api';
 import Browser from './Browser';
 import Logger from './Logger';
@@ -23,29 +22,13 @@ import {
     appendQueryParams,
     stripAuthFromString,
     isValidFileId,
-    isBoxWebApp,
     convertWatermarkPref,
 } from './util';
-import {
-    getURL,
-    getDownloadURL,
-    checkPermission,
-    checkFeature,
-    checkFileValid,
-    cacheFile,
-    uncacheFile,
-    isWatermarked,
-    getCachedFile,
-    normalizeFileVersion,
-    canDownload,
-    shouldDownloadWM,
-} from './file';
+import { getURL, checkFeature, checkFileValid, cacheFile, uncacheFile, getCachedFile } from './file';
 import {
     API_HOST,
     APP_HOST,
     CLASS_NAVIGATION_VISIBILITY,
-    ERROR_CODE_403_FORBIDDEN_BY_POLICY,
-    PERMISSION_PREVIEW,
     PREVIEW_SCRIPT_NAME,
     X_REP_HINT_BASE,
     X_REP_HINT_DOC_THUMBNAIL,
@@ -58,11 +41,9 @@ import {
     DURATION_METRIC,
     ERROR_CODE,
     LOAD_METRIC,
-    PREVIEW_DOWNLOAD_ATTEMPT_EVENT,
     PREVIEW_END_EVENT,
     PREVIEW_ERROR,
     PREVIEW_METRIC,
-    RENDER_METRIC,
     VIEWER_EVENT,
 } from './events';
 import { getClientLogDetails, getISOTime } from './logUtils';
@@ -76,7 +57,6 @@ const KEYDOWN_EXCEPTIONS = ['INPUT', 'SELECT', 'TEXTAREA']; // Ignore keydown ev
 const LOG_RETRY_TIMEOUT_MS = 500; // retry interval for logging preview event
 const LOG_RETRY_COUNT = 3; // number of times to retry logging preview event
 const MS_IN_S = 1000; // ms in a sec
-const SUPPORT_URL = 'https://support.box.com';
 
 // All preview assets are relative to preview.js. Here we create a location
 // object that mimics the window location object and points to where
@@ -101,6 +81,10 @@ class Preview extends EventEmitter {
 
     /** @property {Object} - Current file being previewed */
     file = {};
+
+    downloadedFile = {};
+
+    fileBlob = {};
 
     /** @property {Object} - User-specified preview options */
     previewOptions = {};
@@ -182,6 +166,7 @@ class Preview extends EventEmitter {
         this.navigateLeft = this.navigateLeft.bind(this);
         this.navigateRight = this.navigateRight.bind(this);
         this.keydownHandler = this.keydownHandler.bind(this);
+        this.getBlob = this.getBlob.bind(this);
     }
 
     /**
@@ -507,7 +492,7 @@ class Preview extends EventEmitter {
      * @return {boolean}
      */
     canPrint() {
-        return !!canDownload(this.file, this.options) && checkFeature(this.viewer, 'print');
+        return checkFeature(this.viewer, 'print');
     }
 
     /**
@@ -529,75 +514,12 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     download() {
-        const downloadErrorMsg = __('notification_cannot_download');
-        const downloadErrorDueToPolicyMsg = __('notification_cannot_download_due_to_policy');
-
-        if (!canDownload(this.file, this.options)) {
-            this.ui.showNotification(downloadErrorMsg);
-            return;
-        }
-
-        // Make sure to append any optional query params to requests
-        const { apiHost, queryParams } = this.options;
-
-        // If we should download the watermarked representation of the file, generate the representation URL, force
-        // the correct content disposition, and download
-        if (shouldDownloadWM(this.file, this.options)) {
-            const contentUrlTemplate = getProp(this.viewer.getRepresentation(), 'content.url_template');
-            if (!contentUrlTemplate) {
-                this.ui.showNotification(downloadErrorMsg);
-                return;
-            }
-
-            // This allows the browser to download representation content
-            const params = { response_content_disposition_type: 'attachment', ...queryParams };
-            const downloadUrl = appendQueryParams(
-                this.viewer.createContentUrlWithAuthParams(contentUrlTemplate, this.viewer.getAssetPath()),
-                params,
-            );
-
-            this.api.reachability.downloadWithReachabilityCheck(downloadUrl);
-
-            // Otherwise, get the content download URL of the original file and download
-        } else {
-            const getDownloadUrl = appendQueryParams(getDownloadURL(this.file.id, apiHost), queryParams);
-            this.api
-                .get(getDownloadUrl, { headers: this.getRequestHeaders() })
-                .then(data => {
-                    const downloadUrl = appendQueryParams(data.download_url, queryParams);
-                    this.api.reachability.downloadWithReachabilityCheck(downloadUrl);
-                })
-                .catch(error => {
-                    const code = getProp(error, 'response.data.code');
-                    const msg =
-                        code === ERROR_CODE_403_FORBIDDEN_BY_POLICY ? downloadErrorDueToPolicyMsg : downloadErrorMsg;
-                    this.ui.showNotification(msg);
-                });
-        }
-
-        this.emitLogEvent(PREVIEW_METRIC, {
-            event_name: PREVIEW_DOWNLOAD_ATTEMPT_EVENT,
-            value: this.viewer ? this.viewer.getLoadStatus() : null,
-        });
-    }
-
-    /**
-     * Updates the token Preview uses. Passed in parameter can either be a
-     * string token or token generation function. See tokens.js.
-     *
-     * @public
-     * @param {string|Function} tokenOrTokenFunc - Either an access token or token
-     * generator function
-     * @param {boolean} [reload] - Whether or not to reload the current preview
-     * with the updated token, defaults to true
-     * @return {void}
-     */
-    updateToken(tokenOrTokenFunc, reload = true) {
-        this.previewOptions.token = tokenOrTokenFunc;
-
-        if (reload) {
-            this.reload(false); // Fetch file info from server and reload preview with updated token
-        }
+        const url = window.URL.createObjectURL(this.fileBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'example_name.pdf');
+        document.body.appendChild(link);
+        link.click();
     }
 
     /**
@@ -757,9 +679,10 @@ class Preview extends EventEmitter {
             // File is not a well-formed file object but has a file ID and/or file version ID (e.g. Content Explorer)
         } else if (fileIdOrFile && typeof fileIdOrFile.id === 'string') {
             /* eslint-disable camelcase */
-            const { id, file_version } = fileIdOrFile;
+            const { file_version } = fileIdOrFile;
 
-            this.file = { id };
+            this.file = fileIdOrFile;
+
             if (file_version) {
                 this.file.file_version = {
                     id: file_version.id,
@@ -774,10 +697,6 @@ class Preview extends EventEmitter {
                 'File is not a well-formed Box File object. See FILE_FIELDS in file.js for a list of required fields.',
             );
         }
-
-        // Start the preview load and render timers when the user starts to perceive preview's load
-        Timer.start(Timer.createTag(this.file.id, LOAD_METRIC.previewLoadTime));
-        Timer.start(Timer.createTag(this.file.id, RENDER_METRIC));
 
         // If file version ID is specified, increment retry count if it matches current file version ID
         if (fileVersionId) {
@@ -838,14 +757,7 @@ class Preview extends EventEmitter {
             this.setupUI();
         }
 
-        // Load from cache if the current file is valid, otherwise load file info from server
-        if (checkFileValid(this.file)) {
-            // Save file in cache. This also adds the 'ORIGINAL' representation. It is required to preview files offline
-            cacheFile(this.cache, this.file);
-            this.loadFromCache();
-        } else {
-            this.loadFromServer();
-        }
+        this.loadFromServer();
     }
 
     /**
@@ -1053,22 +965,20 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     loadFromServer() {
-        const { apiHost, previewWMPref, queryParams } = this.options;
-        const params = {
-            watermark_preference: convertWatermarkPref(previewWMPref),
-            ...queryParams,
-        };
-
-        const fileVersionId = this.getFileOption(this.file.id, FILE_OPTION_FILE_VERSION_ID) || '';
-
-        const tag = Timer.createTag(this.file.id, LOAD_METRIC.fileInfoTime);
-        Timer.start(tag);
-
-        const fileInfoUrl = appendQueryParams(getURL(this.file.id, fileVersionId, apiHost), params);
-        this.api
-            .get(fileInfoUrl, { headers: this.getRequestHeaders() })
+        axios
+            .get(this.file.id)
             .then(this.handleFileInfoResponse)
             .catch(this.handleFetchError);
+
+        axios.get(this.file.id, { responseType: 'blob' }).then(this.getBlob);
+    }
+
+    getBlob(res) {
+        this.fileBlob = new Blob([res.data], { type: 'application/pdf' });
+
+        if (!this.viewer) {
+            this.loadViewer();
+        }
     }
 
     /**
@@ -1079,55 +989,12 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     handleFileInfoResponse(response) {
-        let file = response;
-
-        // Stop timer for file info time event.
-        const tag = Timer.createTag(this.file.id, LOAD_METRIC.fileInfoTime);
-        Timer.stop(tag);
-
-        // If we are previewing a file version, normalize response to a well-formed file object
-        if (this.getFileOption(this.file.id, FILE_OPTION_FILE_VERSION_ID)) {
-            file = normalizeFileVersion(response, this.file.id);
-        }
-
-        // If preview is closed or response comes back for an incorrect file, don't do anything
-        const responseFileVersionId = file.file_version.id;
-        if (
-            !this.open ||
-            (this.file && this.file.file_version && this.file.file_version.id !== responseFileVersionId)
-        ) {
-            return;
-        }
-
         try {
             // Set current file to file data from server and update file in logger
-            this.file = file;
-            this.logger.setFile(file);
+            this.downloadedFile = response;
+            this.logger.setFile(response);
 
-            // Keep reference to previously cached file version
-            const cachedFile = getCachedFile(this.cache, { fileVersionId: responseFileVersionId });
-
-            // Explicitly uncache watermarked files, otherwise update cache
-            const isFileWatermarked = isWatermarked(file);
-            if (isFileWatermarked) {
-                uncacheFile(this.cache, file);
-            } else {
-                cacheFile(this.cache, file);
-            }
-
-            // Should load viewer for first time if:
-            //   - File isn't cached OR
-            //   - Cached file doesn't have a valid structure
-            if (!cachedFile || !checkFileValid(cachedFile)) {
-                this.loadViewer();
-
-                // Otherwise re-load viewer if:
-                //   - Cached file is stale
-                //   - File is newly watermarked
-            } else if (cachedFile.file_version.sha1 !== file.file_version.sha1 || isFileWatermarked) {
-                this.logger.setCacheStale(); // Log that cache is stale
-                this.reload(true); // Reload viewer without fetching updated file info from server
-            }
+            this.loadViewer();
         } catch (err) {
             const error =
                 err instanceof PreviewError
@@ -1147,34 +1014,15 @@ class Preview extends EventEmitter {
      */
     loadViewer() {
         // If preview is closed don't do anything
-        if (!this.open) {
+        if (!this.open || this.fileBlob.constructor.name !== 'Blob' || !Object.keys(this.downloadedFile).length) {
             return;
         }
 
-        // Check if file is downloadable
-        if (this.file.is_download_available === false) {
-            const details = isBoxWebApp()
-                ? {
-                      linkText: __('link_contact_us'),
-                      linkUrl: SUPPORT_URL,
-                  }
-                : {};
-            throw new PreviewError(ERROR_CODE.NOT_DOWNLOADABLE, __('error_not_downloadable'), details);
-        }
-
-        // Check if preview permissions exist
-        if (!checkPermission(this.file, PERMISSION_PREVIEW)) {
-            throw new PreviewError(ERROR_CODE.PERMISSIONS_PREVIEW, __('error_permissions'));
-        }
-
         // Show loading download button if user can download
-        if (canDownload(this.file, this.options)) {
-            this.ui.showLoadingDownloadButton(this.download);
-        }
+        this.ui.showLoadingDownloadButton(this.download);
 
         // Determine the asset loader to use
-        const loader = this.getLoader(this.file);
-
+        const loader = this.getLoader('pdf');
         // If no loader, then check to see if any of our viewers support this file type.
         // If they do, we know the account can't preview this file type. If they can't we know this file type is unsupported.
         if (!loader) {
@@ -1197,20 +1045,21 @@ class Preview extends EventEmitter {
         }
 
         // Determine the viewer to use
-        const viewer = loader.determineViewer(this.file, Object.keys(this.disabledViewers), this.options.viewers);
+        const viewer = loader.determineViewer('pdf');
 
         // Log the type of file
         this.logger.setType(viewer.NAME);
 
         // Determine the representation to use
-        const representation = loader.determineRepresentation(this.file, viewer);
-
+        const representation = viewer.REP;
         // Instantiate the viewer
         const viewerOptions = this.createViewerOptions({
             viewer,
             representation,
             container: this.container,
             file: this.file,
+            downloadedFile: this.downloadedFile,
+            fileBlob: this.fileBlob,
         });
         viewerOptions.logger = this.logger; // Don't clone the logger since it needs to track metrics
         this.viewer = new viewer.CONSTRUCTOR(viewerOptions);
@@ -1315,13 +1164,9 @@ class Preview extends EventEmitter {
         // Log now that loading is finished
         this.emitLoadMetrics(data);
 
-        if (canDownload(this.file, this.options)) {
-            this.ui.showDownloadButton(this.download);
-        }
+        this.ui.showDownloadButton(this.download);
 
-        if (this.canPrint()) {
-            this.ui.showPrintButton(this.print);
-        }
+        this.ui.showPrintButton(this.print);
 
         const { error } = data;
         if (error) {
@@ -1362,11 +1207,6 @@ class Preview extends EventEmitter {
 
             // Emit performance metrics after rendering has settled
             setTimeout(this.emitPerfMetrics.bind(this), 3000);
-
-            // If there wasn't an error and event logging is not disabled, use Events API to log a preview
-            if (!this.options.disableEventLog) {
-                this.logPreviewEvent(this.file.id, this.options);
-            }
 
             // Hookup for phantom JS health check
             if (typeof window.callPhantom === 'function') {
@@ -1443,12 +1283,6 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     handleFetchError(err) {
-        // If preview is closed don't do anything
-        if (!this.open) {
-            return;
-        }
-
-        // Nuke the cache
         uncacheFile(this.cache, this.file);
 
         // Check if we hit the retry limit for fetching file info

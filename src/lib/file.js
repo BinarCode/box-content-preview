@@ -55,7 +55,7 @@ export function getDownloadURL(id, apiHost) {
  * @return {Object|null} Maching representation object or null
  */
 export function getRepresentation(file, repName) {
-    return file.representations.entries.find(entry => entry.representation === repName) || null;
+    return null;
 }
 
 /**
@@ -133,41 +133,6 @@ export function normalizeFileVersion(fileVersion, fileId) {
 }
 
 /**
- * If the file doesn't already have an original representation, creates an
- * original representation url from the authenticated download url and adds
- * it to the file representations
- *
- * @private
- * @param {Object} file - Box file
- * @return {void}
- */
-function addOriginalRepresentation(file) {
-    // Don't add an original representation if it already exists
-    if (getRepresentation(file, ORIGINAL_REP_NAME)) {
-        return;
-    }
-
-    const queryParams = {
-        preview: 'true',
-    };
-
-    if (file.file_version) {
-        queryParams.version = file.file_version.id;
-    }
-
-    const template = appendQueryParams(file.authenticated_download_url, queryParams);
-    file.representations.entries.push({
-        content: {
-            url_template: template,
-        },
-        representation: ORIGINAL_REP_NAME,
-        status: {
-            state: 'success',
-        },
-    });
-}
-
-/**
  * Helper to get cache key based on file ID or file version ID. Pass in one or the other.
  *
  * @param {Object} options - Cache key options
@@ -200,11 +165,6 @@ export function cacheFile(cache, file) {
     // Don't cache watermarked files
     if (isWatermarked(file)) {
         return;
-    }
-
-    // Some viewers require the original file for preview, so this adds a faked 'ORIGINAL' representation
-    if (file.representations) {
-        addOriginalRepresentation(file);
     }
 
     // Cache using file ID as a key
