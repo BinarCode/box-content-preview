@@ -1,6 +1,5 @@
 import BaseViewer from '../BaseViewer';
 import PreviewError from '../../PreviewError';
-import { canDownload } from '../../file';
 import { getIconFromExtension, getIconFromName } from '../../icons/icons';
 import { ERROR_CODE, VIEWER_EVENT } from '../../events';
 import { stripAuthFromString } from '../../util';
@@ -97,12 +96,7 @@ class PreviewErrorViewer extends BaseViewer {
         // Display user-friendly error message
         this.messageEl.textContent = displayMessage;
 
-        // Add optional link or download button
-        if (details && details.linkText && details.linkUrl) {
-            this.addLinkButton(details.linkText, details.linkUrl);
-        } else if (canDownload(file, this.options)) {
-            this.addDownloadButton();
-        }
+        this.addDownloadButton();
 
         this.loaded = true;
 

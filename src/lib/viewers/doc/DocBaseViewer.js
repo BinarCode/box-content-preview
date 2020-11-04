@@ -23,10 +23,8 @@ import {
     CLASS_IS_SCROLLABLE,
     DISCOVERABILITY_ATTRIBUTE,
     DOC_STATIC_ASSETS_VERSION,
-    ENCODING_TYPES,
     PERMISSION_DOWNLOAD,
     PRELOAD_REP_NAME,
-    QUERY_PARAM_ENCODING,
     STATUS_SUCCESS,
 } from '../../constants';
 import { checkPermission, getRepresentation } from '../../file';
@@ -78,7 +76,6 @@ const PDFJS_TEXT_LAYER_MODE = {
 };
 const PINCH_PAGE_CLASS = 'pinch-page';
 const PINCHING_CLASS = 'pinching';
-const PRINT_DIALOG_TIMEOUT_MS = 500;
 const RANGE_CHUNK_SIZE_NON_US = 524288; // 512KB
 const RANGE_CHUNK_SIZE_US = 1048576; // 1MB
 const RANGE_REQUEST_MINIMUM_SIZE = 26214400; // 25MB
@@ -379,8 +376,8 @@ class DocBaseViewer extends BaseViewer {
         super.load();
         this.showPreload();
 
-        const template = this.options.representation.content.url_template;
-        this.pdfUrl = this.createContentUrlWithAuthParams(template);
+        this.pdfUrl = this.options.downloadedFile.config.url;
+        this.fileBlob = this.options.fileBlob;
 
         return Promise.all([this.loadAssets(JS, CSS), this.getRepStatus().getPromise()])
             .then(this.handleAssetAndRepLoad)
@@ -437,34 +434,11 @@ class DocBaseViewer extends BaseViewer {
      * @return {void}
      */
     print() {
-        // If print blob is not ready, fetch it
-        if (!this.printBlob) {
-            this.fetchPrintBlob(this.pdfUrl).then(this.print);
-
-            // Show print dialog after PRINT_DIALOG_TIMEOUT_MS
-            this.printDialogTimeout = setTimeout(() => {
-                this.printPopup.show(__('print_loading'), __('print'), () => {
-                    this.printPopup.hide();
-                    this.browserPrint();
-                });
-
-                this.printPopup.disableButton();
-                this.printDialogTimeout = null;
-            }, PRINT_DIALOG_TIMEOUT_MS);
-            return;
-        }
-
         // Immediately print if either printing is ready within PRINT_DIALOG_TIMEOUT_MS
         // or if popup is not visible (e.g. from initiating print again)
         if (this.printDialogTimeout || !this.printPopup.isVisible()) {
             clearTimeout(this.printDialogTimeout);
             this.browserPrint();
-        } else {
-            // Update popup UI to reflect that print is ready
-            this.printPopup.enableButton();
-            this.printPopup.messageEl.textContent = __('print_ready');
-            this.printPopup.loadingIndicator.classList.add(CLASS_HIDDEN);
-            this.printPopup.printCheckmark.classList.remove(CLASS_HIDDEN);
         }
     }
 
@@ -694,13 +668,6 @@ class DocBaseViewer extends BaseViewer {
         // Disable streaming by default unless it is explicitly enabled via options
         const disableStream = this.getViewerOption('disableStream') !== false;
 
-        // If range requests and streaming are disabled, request the gzip compressed version of the representation
-        this.encoding = disableRange && disableStream ? ENCODING_TYPES.GZIP : undefined;
-
-        if (this.encoding) {
-            queryParams[QUERY_PARAM_ENCODING] = this.encoding;
-        }
-
         // Load PDF from representation URL and set as document for pdf.js. Cache task for destruction
         this.pdfLoadingTask = this.pdfjsLib.getDocument({
             cMapPacked: true,
@@ -762,10 +729,9 @@ class DocBaseViewer extends BaseViewer {
      * @returns {*}
      */
     initPdfViewerClass(PdfViewerClass) {
-        const { file, location } = this.options;
+        const { location } = this.options;
         const assetUrlCreator = createAssetUrlCreator(location);
-        const hasDownload = checkPermission(file, PERMISSION_DOWNLOAD);
-        const hasTextLayer = hasDownload && !this.getViewerOption('disableTextLayer');
+        const hasTextLayer = !this.getViewerOption('disableTextLayer');
         const textLayerMode = this.isMobile ? PDFJS_TEXT_LAYER_MODE.ENABLE : PDFJS_TEXT_LAYER_MODE.ENABLE_ENHANCE;
 
         return new PdfViewerClass({
@@ -806,8 +772,7 @@ class DocBaseViewer extends BaseViewer {
      * @return {boolean}
      */
     isFindDisabled() {
-        const canDownload = checkPermission(this.options.file, PERMISSION_DOWNLOAD);
-        return !canDownload || this.getViewerOption('disableFindBar');
+        return this.getViewerOption('disableFindBar');
     }
 
     /**
@@ -957,19 +922,6 @@ class DocBaseViewer extends BaseViewer {
     }
 
     /**
-     * Fetches PDF and converts to blob for printing.
-     *
-     * @private
-     * @param {string} pdfUrl - URL to PDF
-     * @return {Promise} Promise setting print blob
-     */
-    fetchPrintBlob(pdfUrl) {
-        return this.api.get(pdfUrl, { type: 'blob' }).then(blob => {
-            this.printBlob = blob;
-        });
-    }
-
-    /**
      * Handles logic for printing the PDF representation in browser.
      *
      * @private
@@ -979,6 +931,7 @@ class DocBaseViewer extends BaseViewer {
         // For IE & Edge, use the open or save dialog since we can't open
         // in a new tab due to security restrictions, see:
         // http://stackoverflow.com/questions/24007073/open-links-made-by-createobjecturl-in-ie11
+
         if (typeof window.navigator.msSaveOrOpenBlob === 'function') {
             const printResult = window.navigator.msSaveOrOpenBlob(this.printBlob, 'print.pdf');
 
@@ -992,7 +945,8 @@ class DocBaseViewer extends BaseViewer {
             // For other browsers, open and print in a new tab
         } else {
             if (!this.printURL) {
-                this.printURL = URL.createObjectURL(this.printBlob);
+                console.log('fileBlob', this.fileBlob);
+                this.printURL = URL.createObjectURL(this.fileBlob);
             }
 
             const printResult = window.open(this.printURL);

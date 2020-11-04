@@ -116,9 +116,9 @@ class RepStatus extends EventEmitter {
      * @return {void}
      */
     handleResponse() {
-        const status = RepStatus.getStatus(this.representation);
+        const status = STATUS_SUCCESS;
         const convertTag = Timer.createTag(this.fileId, LOAD_METRIC.convertTime);
-        const code = RepStatus.getErrorCode(this.representation);
+        const code = ERROR_CODE.CONVERSION_PASSWORD_PROTECTED;
         let errorMessage;
         let error;
 
