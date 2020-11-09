@@ -17,7 +17,7 @@ $controls-button-width: 32px;
     // Page num input CSS
     .bp-page-num {
         width: auto; // Let page num expand as needed
-        min-width: 48px;
+        min-width: 60px;
 
         span {
             display: inline;
@@ -26,6 +26,7 @@ $controls-button-width: 32px;
     }
 
     .bp-page-num-wrapper {
+        width: 100%;
         margin: 5px;
         padding: 7px 5px;
         background-color: #444;
