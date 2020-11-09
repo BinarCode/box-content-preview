@@ -517,7 +517,7 @@ class Preview extends EventEmitter {
         const url = window.URL.createObjectURL(this.fileBlob);
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', 'example_name.pdf');
+        link.setAttribute('download', this.previewOptions.token);
         document.body.appendChild(link);
         link.click();
     }
